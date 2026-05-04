@@ -373,12 +373,22 @@ export default function App() {
 
   const fetchMatches = async () => {
     setIsMatchesLoading(true);
+    setError(null);
     try {
-      const res = await fetch('/api/matches');
+      const res = await fetch('/api/live-match');
       const data = await res.json();
-      setUpcomingMatches(data.results || []);
+      
+      if (data.error) {
+        setError(data.error);
+        setUpcomingMatches([]);
+      } else if (data.message === "No live matches") {
+        setUpcomingMatches([]);
+      } else {
+        setUpcomingMatches(data.results || []);
+      }
     } catch (e) {
       console.error("Match fetch error", e);
+      setError("API error: Could not fetch live matches.");
     } finally {
       setIsMatchesLoading(false);
     }
@@ -693,13 +703,13 @@ export default function App() {
                         <option value="">No Live Match Sync (Pure Image Analysis)</option>
                         {upcomingMatches.map((m: any) => (
                           <option key={m.id || m.match_id} value={m.id || m.match_id}>
-                            {m.title || `${m.team_a} vs ${m.team_b}`} ({m.match_status || 'Soon'})
+                            {m.title || `${m.team_a} vs ${m.team_b}`} ({m.match_status || 'Soon'}) {m.score ? `- ${m.score}` : ''}
                           </option>
                         ))}
                       </select>
                       {upcomingMatches.length === 0 && !isMatchesLoading && (
                         <p className="text-[9px] text-white/20 italic text-center px-4">
-                          No live matches detected. Please ensure RAPIDAPI_KEY is configured in your secrets.
+                          {error ? error : "No live matches detected at the moment."}
                         </p>
                       )}
                     </div>
