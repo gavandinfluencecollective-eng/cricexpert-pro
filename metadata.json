@@ -1,0 +1,12 @@
+{
+  "name": "Remix: CricExpert Pro - AI Fantasy Analyst",
+  "description": "Professional cricket fantasy team generator. Upload player stats and ground data to get expert AI analysis and winning team combinations for Grand, Small, and Medium leagues.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "AI-powered data analysis",
+    "Multi-image OCR",
+    "Fantasy team generation"
+  ]
+}
