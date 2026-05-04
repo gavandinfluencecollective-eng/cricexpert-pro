@@ -1,20 +1,24 @@
-export default async function handler(req, res) {
-  try {
-    const response = await fetch("https://cricbuzz-cricket.p.rapidapi.com/matches/v1/live", {
-      method: "GET",
-      headers: {
-        "X-RapidAPI-Key": process.env.RAPIDAPI_KEY,
-        "X-RapidAPI-Host": "cricbuzz-cricket.p.rapidapi.com"
-      }
-    });
+let url = "https://cricbuzz-cricket.p.rapidapi.com/matches/v1/live";
 
-    const data = await response.json();
-    res.status(200).json(data);
-
-  } catch (error) {
-    res.status(500).json({
-      error: "API fetch failed",
-      message: error.message
-    });
+let response = await fetch(url, {
+  method: "GET",
+  headers: {
+    "X-RapidAPI-Key": process.env.RAPIDAPI_KEY,
+    "X-RapidAPI-Host": "cricbuzz-cricket.p.rapidapi.com"
   }
+});
+
+let data = await response.json();
+
+// 🔥 fallback
+if (!data || Object.keys(data).length === 0) {
+  const upcomingRes = await fetch("https://cricbuzz-cricket.p.rapidapi.com/matches/v1/upcoming", {
+    method: "GET",
+    headers: {
+      "X-RapidAPI-Key": process.env.RAPIDAPI_KEY,
+      "X-RapidAPI-Host": "cricbuzz-cricket.p.rapidapi.com"
+    }
+  });
+
+  data = await upcomingRes.json();
 }
