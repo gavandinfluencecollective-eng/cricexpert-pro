@@ -1,22 +1,22 @@
 export default async function handler(req, res) {
   try {
-    const headers = {
+    const cricbuzzHeaders = {
       "X-RapidAPI-Key": process.env.RAPIDAPI_KEY,
       "X-RapidAPI-Host": "cricbuzz-cricket.p.rapidapi.com"
     };
 
-    // 🔹 1. Sab endpoints call karo
+    // 🔹 1. Cricbuzz se data fetch
     const [liveRes, upcomingRes, recentRes] = await Promise.all([
-      fetch("https://cricbuzz-cricket.p.rapidapi.com/matches/v1/live", { headers }),
-      fetch("https://cricbuzz-cricket.p.rapidapi.com/matches/v1/upcoming", { headers }),
-      fetch("https://cricbuzz-cricket.p.rapidapi.com/matches/v1/recent", { headers })
+      fetch("https://cricbuzz-cricket.p.rapidapi.com/matches/v1/live", { headers: cricbuzzHeaders }),
+      fetch("https://cricbuzz-cricket.p.rapidapi.com/matches/v1/upcoming", { headers: cricbuzzHeaders }),
+      fetch("https://cricbuzz-cricket.p.rapidapi.com/matches/v1/recent", { headers: cricbuzzHeaders })
     ]);
 
     const liveData = await liveRes.json();
     const upcomingData = await upcomingRes.json();
     const recentData = await recentRes.json();
 
-    // 🔹 2. Extract matches safely
+    // 🔹 Extract function
     const extractMatches = (data) => {
       if (!data || !data.typeMatches) return [];
       let matches = [];
@@ -30,20 +30,49 @@ export default async function handler(req, res) {
       return matches;
     };
 
-    const liveMatches = extractMatches(liveData);
-    const upcomingMatches = extractMatches(upcomingData);
-    const recentMatches = extractMatches(recentData);
+    let liveMatches = extractMatches(liveData);
+    let upcomingMatches = extractMatches(upcomingData);
+    let recentMatches = extractMatches(recentData);
 
-    // 🔹 3. Combine all
+    // 🔥 2. Agar Cricbuzz empty ho → CricketData API use kar
+    if (
+      liveMatches.length === 0 &&
+      upcomingMatches.length === 0 &&
+      recentMatches.length === 0
+    ) {
+      const cricketDataRes = await fetch(
+        `https://api.cricketdata.org/v1/matches?apikey=${process.env.CRICKETDATA_API_KEY}`
+      );
+
+      const cricketData = await cricketDataRes.json();
+
+      // Simple format mapping
+      const fallbackMatches = cricketData?.data?.map(match => ({
+        matchId: match.id,
+        name: match.name,
+        status: match.status,
+        teams: match.teams,
+        venue: match.venue
+      })) || [];
+
+      return res.status(200).json({
+        success: true,
+        source: "cricketdata",
+        total: fallbackMatches.length,
+        all: fallbackMatches
+      });
+    }
+
+    // 🔹 3. Combine Cricbuzz data
     const allMatches = [
       ...liveMatches,
       ...upcomingMatches,
       ...recentMatches
     ];
 
-    // 🔹 4. Final response
     return res.status(200).json({
       success: true,
+      source: "cricbuzz",
       total: allMatches.length,
       live: liveMatches,
       upcoming: upcomingMatches,
