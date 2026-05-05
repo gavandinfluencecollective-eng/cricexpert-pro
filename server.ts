@@ -219,25 +219,27 @@ app.get("/api/cricket-data/matches", async (req, res) => {
     });
     
     // Map CricketData.org format to our app format
-    const matches = response.data?.data || [];
+    const matches = Array.isArray(response.data?.data) ? response.data.data : [];
     const formattedMatches = matches.map((m: any) => {
-      const scoreA = m.score?.[0];
-      const scoreB = m.score?.[1];
+      const score = Array.isArray(m.score) ? m.score : [];
+      const scoreA = score[0];
+      const scoreB = score[1];
+      const teams = Array.isArray(m.teams) ? m.teams : ["Unknown", "Unknown"];
       
       return {
-        id: m.id,
-        team_a: m.teams?.[0],
-        team_b: m.teams?.[1],
-        score_a: scoreA ? `${scoreA.r}/${scoreA.w} (${scoreA.o})` : "N/A",
-        score_b: scoreB ? `${scoreB.r}/${scoreB.w} (${scoreB.o})` : "N/A",
+        id: m.id || Math.random().toString(),
+        team_a: teams[0] || "Team A",
+        team_b: teams[1] || "Team B",
+        score_a: scoreA ? `${scoreA.r}/${scoreA.w} (${scoreA.o} ov)` : "Yet to bat",
+        score_b: scoreB ? `${scoreB.r}/${scoreB.w} (${scoreB.o} ov)` : "Yet to bat",
         overs: scoreB ? scoreB.o?.toString() : (scoreA ? scoreA.o?.toString() : "0.0"),
-        league: m.series_id ? "Series Match" : m.matchType?.toUpperCase(),
-        status: m.status,
+        league: m.series_id ? (m.series_id.length > 20 ? "Series Match" : m.series_id) : (m.matchType ? m.matchType.toUpperCase() : "Match"),
+        status: m.status || "Scheduled",
         matchStarted: m.matchStarted,
         matchEnded: m.matchEnded,
-        venue: m.venue,
-        date: m.date,
-        crr: "N/A", // API doesn't provide CRR directly in this view
+        venue: m.venue || "Stadium",
+        date: m.date || "TBD",
+        crr: "N/A",
         last_updated: "Real-time Feed",
         flag_a: "🏏",
         flag_b: "🏏"

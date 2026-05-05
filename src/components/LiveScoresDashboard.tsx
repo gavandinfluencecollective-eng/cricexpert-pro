@@ -65,10 +65,27 @@ export default function LiveScoresDashboard() {
   const fetchMatches = async () => {
     try {
       const response = await fetch('/api/cricket-data/matches');
+      
+      if (!response.ok) {
+        const text = await response.text();
+        let errorMessage = `Server error: ${response.status}`;
+        try {
+          const json = JSON.parse(text);
+          if (json.error) errorMessage = json.error;
+        } catch (e) {
+          // Response was not JSON
+        }
+        setError(errorMessage);
+        return;
+      }
+
       const data = await response.json();
       
       if (data.error) {
         setError(data.error);
+        if (data.data && Array.isArray(data.data)) {
+           // Some APIs return partial data with error
+        }
       } else {
         setLiveMatches(data.live || []);
         setUpcomingMatches(data.upcoming || []);
@@ -77,7 +94,7 @@ export default function LiveScoresDashboard() {
       }
     } catch (err) {
       console.error("Fetch matches error:", err);
-      setError("Connection failure. Retrying...");
+      setError("Network failure. Check your internet connection.");
     } finally {
       setIsLoading(false);
     }
