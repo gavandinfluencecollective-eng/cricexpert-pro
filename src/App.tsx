@@ -30,10 +30,12 @@ import {
   Menu,
   Settings,
   User,
-  Power
+  Power,
+  Activity
 } from 'lucide-react';
 import { analyzeCricketData, chatWithPandit, suggestReplacement, AnalysisResult, FantasyTeam, sanitizeResult } from './services/geminiService';
 import { cn } from './lib/utils';
+import LiveScoresDashboard from './components/LiveScoresDashboard';
 
 interface HistoryItem {
   id: string;
@@ -72,6 +74,7 @@ export default function App() {
   });
   const [showDrawer, setShowDrawer] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [appView, setAppView] = useState<'optimizer' | 'live-scores'>('optimizer');
 
   useEffect(() => {
     localStorage.setItem('cricexpert_optimizer_enabled', String(optimizerEnabled));
@@ -457,6 +460,40 @@ export default function App() {
 
               <div className="flex-1 space-y-8">
                 <nav className="space-y-4">
+                  <button 
+                    onClick={() => { setAppView('optimizer'); setShowDrawer(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group",
+                      appView === 'optimizer' ? "bg-emerald-500 border-emerald-400 text-black" : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10"
+                    )}
+                  >
+                    <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform", appView === 'optimizer' ? "bg-black/10" : "bg-emerald-500/10")}>
+                      <Zap className={cn("w-5 h-5", appView === 'optimizer' ? "text-black" : "text-emerald-500")} />
+                    </div>
+                    <div>
+                      <p className={cn("text-sm font-bold", appView === 'optimizer' ? "text-black" : "text-white")}>AI Optimizer</p>
+                      <p className={cn("text-[10px] uppercase tracking-widest", appView === 'optimizer' ? "text-black/40" : "text-white/30")}>Fantasy Strategy</p>
+                    </div>
+                  </button>
+
+                  <button 
+                    onClick={() => { setAppView('live-scores'); setShowDrawer(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group",
+                      appView === 'live-scores' ? "bg-brand border-brand/40 text-black" : "bg-white/5 border-white/10 text-white/70 hover:bg-white/10"
+                    )}
+                  >
+                    <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform", appView === 'live-scores' ? "bg-black/10" : "bg-brand/10")}>
+                      <Activity className={cn("w-5 h-5", appView === 'live-scores' ? "text-black" : "text-brand")} />
+                    </div>
+                    <div>
+                      <p className={cn("text-sm font-bold", appView === 'live-scores' ? "text-black" : "text-white")}>Live Scores</p>
+                      <p className={cn("text-[10px] uppercase tracking-widest", appView === 'live-scores' ? "text-black/40" : "text-white/30")}>Network Center</p>
+                    </div>
+                  </button>
+
+                  <div className="h-px bg-white/5 my-6" />
+
                   <button className="w-full flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition-colors text-left group">
                     <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center group-hover:scale-110 transition-transform">
                       <User className="w-5 h-5 text-emerald-500" />
@@ -552,14 +589,37 @@ export default function App() {
             >
               <Menu className="w-6 h-6" />
             </button>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-emerald-500 rounded flex items-center justify-center">
+            <div 
+              onClick={() => setAppView('optimizer')}
+              className="flex items-center gap-2 cursor-pointer group"
+            >
+              <div className="w-8 h-8 bg-emerald-500 rounded flex items-center justify-center group-hover:scale-110 transition-transform">
                 <Trophy className="w-5 h-5 text-black" />
               </div>
               <h1 className="font-bold text-xl tracking-tight uppercase">CricExpert <span className="text-emerald-500 underline decoration-2 underline-offset-4">Pro</span></h1>
             </div>
           </div>
           <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center gap-2 mr-4">
+              <button 
+                onClick={() => setAppView('optimizer')}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all",
+                  appView === 'optimizer' ? "text-emerald-500 bg-emerald-500/10 border border-emerald-500/20" : "text-white/30 hover:text-white"
+                )}
+              >
+                AI Optimizer
+              </button>
+              <button 
+                onClick={() => setAppView('live-scores')}
+                className={cn(
+                  "px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all",
+                  appView === 'live-scores' ? "text-brand bg-brand/10 border border-brand/20" : "text-white/30 hover:text-white"
+                )}
+              >
+                Live Scores
+              </button>
+            </div>
             <button 
               onClick={() => setShowHistory(!showHistory)}
               className={cn(
@@ -584,8 +644,11 @@ export default function App() {
       </header>
 
       <main className="relative z-10 max-w-7xl mx-auto px-4 py-8 md:py-16">
-        <AnimatePresence mode="wait">
-          {showHistory ? (
+        {appView === 'live-scores' ? (
+          <LiveScoresDashboard />
+        ) : (
+          <AnimatePresence mode="wait">
+            {showHistory ? (
             <motion.div
               key="history"
               initial={{ opacity: 0, x: -20 }}
@@ -1324,6 +1387,7 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
+      )}
       </main>
     </div>
   );

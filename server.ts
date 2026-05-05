@@ -15,8 +15,13 @@ app.use(express.json({ limit: '50mb' }));
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const RAPIDAPI_HOST = "cricbuzz-cricket.p.rapidapi.com";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const CRICKETDATA_API_KEY = process.env.CRICKETDATA_API_KEY;
 
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY! });
+
+const cricketDataApi = axios.create({
+  baseURL: `https://api.cricapi.com/v1`,
+});
 
 const cricketApi = axios.create({
   baseURL: `https://cricket-live-data.p.rapidapi.com`,
@@ -196,6 +201,57 @@ app.get("/api/live-match", async (req, res) => {
     console.error("Match Fetch API Error:", error.message);
     if (matchCache) return res.json({ ...matchCache.data, _stale: true });
     res.json({ error: "API connection error. Try again later.", live: [], upcoming: [], recent: [], results: [] });
+  }
+});
+
+// New CricketData.org Route
+app.get("/api/cricket-data/matches", async (req, res) => {
+  if (!CRICKETDATA_API_KEY) {
+    return res.status(200).json({ 
+      error: "CRICKETDATA_API_KEY not found. Please set it in environment.", 
+      data: [] 
+    });
+  }
+
+  try {
+    const response = await cricketDataApi.get("/currentMatches", {
+      params: { apikey: CRICKETDATA_API_KEY, offset: 0 }
+    });
+    
+    // Map CricketData.org format to our app format
+    const matches = response.data?.data || [];
+    const formattedMatches = matches.map((m: any) => {
+      const scoreA = m.score?.[0];
+      const scoreB = m.score?.[1];
+      
+      return {
+        id: m.id,
+        team_a: m.teams?.[0],
+        team_b: m.teams?.[1],
+        score_a: scoreA ? `${scoreA.r}/${scoreA.w} (${scoreA.o})` : "N/A",
+        score_b: scoreB ? `${scoreB.r}/${scoreB.w} (${scoreB.o})` : "N/A",
+        overs: scoreB ? scoreB.o?.toString() : (scoreA ? scoreA.o?.toString() : "0.0"),
+        league: m.series_id ? "Series Match" : m.matchType?.toUpperCase(),
+        status: m.status,
+        matchStarted: m.matchStarted,
+        matchEnded: m.matchEnded,
+        venue: m.venue,
+        date: m.date,
+        crr: "N/A", // API doesn't provide CRR directly in this view
+        last_updated: "Real-time Feed",
+        flag_a: "🏏",
+        flag_b: "🏏"
+      };
+    });
+
+    const live = formattedMatches.filter((m: any) => m.matchStarted && !m.matchEnded);
+    const completed = formattedMatches.filter((m: any) => m.matchEnded);
+    const upcoming = formattedMatches.filter((m: any) => !m.matchStarted);
+
+    res.json({ live, completed, upcoming });
+  } catch (error: any) {
+    console.error("CricketData API Error:", error.message);
+    res.status(500).json({ error: "Failed to fetch from CricketData API" });
   }
 });
 
