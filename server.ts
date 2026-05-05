@@ -12,6 +12,65 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '50mb' }));
 
+app.get("/api/ping", (req, res) => {
+  res.json({ status: "ok", message: "Server is alive" });
+});
+
+// New CricketData.org Route
+app.get("/api/cricket-data/matches", async (req, res) => {
+  console.log("CRICKETDATA ROUTE HIT");
+  if (!CRICKETDATA_API_KEY) {
+    return res.status(200).json({ 
+      error: "CRICKETDATA_API_KEY not found. Please set it in environment.", 
+      data: [] 
+    });
+  }
+
+  try {
+    const response = await cricketDataApi.get("/currentMatches", {
+      params: { apikey: CRICKETDATA_API_KEY, offset: 0 },
+      timeout: 10000 // 10s timeout
+    });
+    
+    // Map CricketData.org format to our app format
+    const matches = Array.isArray(response.data?.data) ? response.data.data : [];
+    const formattedMatches = matches.map((m: any) => {
+      const score = Array.isArray(m.score) ? m.score : [];
+      const scoreA = score[0];
+      const scoreB = score[1];
+      const teams = Array.isArray(m.teams) ? m.teams : ["Unknown", "Unknown"];
+      
+      return {
+        id: m.id || Math.random().toString(),
+        team_a: teams[0] || "Team A",
+        team_b: teams[1] || "Team B",
+        score_a: scoreA ? `${scoreA.r}/${scoreA.w} (${scoreA.o} ov)` : "Yet to bat",
+        score_b: scoreB ? `${scoreB.r}/${scoreB.w} (${scoreB.o} ov)` : "Yet to bat",
+        overs: scoreB ? scoreB.o?.toString() : (scoreA ? scoreA.o?.toString() : "0.0"),
+        league: m.series_id ? (m.series_id.length > 20 ? "Series Match" : m.series_id) : (m.matchType ? m.matchType.toUpperCase() : "Match"),
+        status: m.status || "Scheduled",
+        matchStarted: m.matchStarted,
+        matchEnded: m.matchEnded,
+        venue: m.venue || "Stadium",
+        date: m.date || "TBD",
+        crr: "N/A",
+        last_updated: "Real-time Feed",
+        flag_a: "🏏",
+        flag_b: "🏏"
+      };
+    });
+
+    const live = formattedMatches.filter((m: any) => m.matchStarted && !m.matchEnded);
+    const completed = formattedMatches.filter((m: any) => m.matchEnded);
+    const upcoming = formattedMatches.filter((m: any) => !m.matchStarted);
+
+    res.json({ live, completed, upcoming });
+  } catch (error: any) {
+    console.error("CricketData API Error:", error.message);
+    res.status(500).json({ error: "Failed to fetch from CricketData API: " + error.message });
+  }
+});
+
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 const RAPIDAPI_HOST = "cricbuzz-cricket.p.rapidapi.com";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -201,59 +260,6 @@ app.get("/api/live-match", async (req, res) => {
     console.error("Match Fetch API Error:", error.message);
     if (matchCache) return res.json({ ...matchCache.data, _stale: true });
     res.json({ error: "API connection error. Try again later.", live: [], upcoming: [], recent: [], results: [] });
-  }
-});
-
-// New CricketData.org Route
-app.get("/api/cricket-data/matches", async (req, res) => {
-  if (!CRICKETDATA_API_KEY) {
-    return res.status(200).json({ 
-      error: "CRICKETDATA_API_KEY not found. Please set it in environment.", 
-      data: [] 
-    });
-  }
-
-  try {
-    const response = await cricketDataApi.get("/currentMatches", {
-      params: { apikey: CRICKETDATA_API_KEY, offset: 0 }
-    });
-    
-    // Map CricketData.org format to our app format
-    const matches = Array.isArray(response.data?.data) ? response.data.data : [];
-    const formattedMatches = matches.map((m: any) => {
-      const score = Array.isArray(m.score) ? m.score : [];
-      const scoreA = score[0];
-      const scoreB = score[1];
-      const teams = Array.isArray(m.teams) ? m.teams : ["Unknown", "Unknown"];
-      
-      return {
-        id: m.id || Math.random().toString(),
-        team_a: teams[0] || "Team A",
-        team_b: teams[1] || "Team B",
-        score_a: scoreA ? `${scoreA.r}/${scoreA.w} (${scoreA.o} ov)` : "Yet to bat",
-        score_b: scoreB ? `${scoreB.r}/${scoreB.w} (${scoreB.o} ov)` : "Yet to bat",
-        overs: scoreB ? scoreB.o?.toString() : (scoreA ? scoreA.o?.toString() : "0.0"),
-        league: m.series_id ? (m.series_id.length > 20 ? "Series Match" : m.series_id) : (m.matchType ? m.matchType.toUpperCase() : "Match"),
-        status: m.status || "Scheduled",
-        matchStarted: m.matchStarted,
-        matchEnded: m.matchEnded,
-        venue: m.venue || "Stadium",
-        date: m.date || "TBD",
-        crr: "N/A",
-        last_updated: "Real-time Feed",
-        flag_a: "🏏",
-        flag_b: "🏏"
-      };
-    });
-
-    const live = formattedMatches.filter((m: any) => m.matchStarted && !m.matchEnded);
-    const completed = formattedMatches.filter((m: any) => m.matchEnded);
-    const upcoming = formattedMatches.filter((m: any) => !m.matchStarted);
-
-    res.json({ live, completed, upcoming });
-  } catch (error: any) {
-    console.error("CricketData API Error:", error.message);
-    res.status(500).json({ error: "Failed to fetch from CricketData API" });
   }
 });
 

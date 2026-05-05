@@ -64,6 +64,14 @@ export default function LiveScoresDashboard() {
 
   const fetchMatches = async () => {
     try {
+      // First, check if server is reachable
+      const pingRes = await fetch('/api/ping').catch(() => null);
+      if (!pingRes || pingRes.status === 404) {
+        setError(`Server unreachable (404). The backend might not be running.`);
+        setIsLoading(false);
+        return;
+      }
+
       const response = await fetch('/api/cricket-data/matches');
       
       if (!response.ok) {
