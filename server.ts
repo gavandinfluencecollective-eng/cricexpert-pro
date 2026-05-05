@@ -36,24 +36,22 @@ const cricbuzzApi = axios.create({
 
 // Live Match Cache
 let matchCache: { data: any; timestamp: number } | null = null;
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const FRESH_CACHE_TTL = 10 * 60 * 1000; // 10 minutes (Fresh)
+const PERSISTENT_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours (Stale fallback)
 
-// Live Match Route
-app.get("/api/live-match", async (req, res) => {
-  console.log("Live match request received");
-  
-  if (!RAPIDAPI_KEY) {
-    console.error("RAPIDAPI_KEY is missing");
-    return res.status(200).json({ error: "API key not configured", results: [] });
+// Error state tracking
+let cricbuzzCircuitUntil: number = 0;
+let fallbackCircuitUntil: number = 0;
+const CIRCUIT_TIMEOUT = 10 * 60 * 1000; // 10 mins
+
+// Helper to fetch Cricbuzz data
+const fetchCricbuzzCategory = async (category: 'live' | 'upcoming' | 'recent') => {
+  if (Date.now() < cricbuzzCircuitUntil) {
+    return { data: [], error: "Circuit breaker active" };
   }
 
-  // Check Cache first
-  if (matchCache && (Date.now() - matchCache.timestamp < CACHE_TTL)) {
-    return res.json(matchCache.data);
-  }
-
-  const tryCricbuzz = async () => {
-    const response = await cricbuzzApi.get("/matches/v1/live");
+  try {
+    const response = await cricbuzzApi.get(`/matches/v1/${category}`, { timeout: 8000 });
     const typeMatches = response.data?.typeMatches || [];
     const matches: any[] = [];
     
@@ -65,12 +63,13 @@ app.get("/api/live-match", async (req, res) => {
               const matchInfo = m.matchInfo;
               if (matchInfo) {
                 matches.push({
-                  id: matchInfo.matchId,
+                  id: matchInfo.matchId?.toString(),
                   title: matchInfo.seriesName,
                   team_a: matchInfo.team1?.teamName,
                   team_b: matchInfo.team2?.teamName,
                   match_status: matchInfo.status,
-                  score: m.matchScore ? `${m.matchScore.team1Score?.inngs1?.runs || 0}/${m.matchScore.team1Score?.inngs1?.wickets || 0} vs ${m.matchScore.team2Score?.inngs1?.runs || 0}/${m.matchScore.team2Score?.inngs1?.wickets || 0}` : "No score"
+                  type: category,
+                  score: m.matchScore ? `${m.matchScore.team1Score?.inngs1?.runs || 0}/${m.matchScore.team1Score?.inngs1?.wickets || 0} vs ${m.matchScore.team2Score?.inngs1?.runs || 0}/${m.matchScore.team2Score?.inngs1?.wickets || 0}` : (category === 'upcoming' ? "Starts soon" : "Final results")
                 });
               }
             });
@@ -78,67 +77,125 @@ app.get("/api/live-match", async (req, res) => {
         });
       }
     });
-    return matches;
-  };
+    return { data: matches, error: null };
+  } catch (e: any) {
+    const status = e.response?.status;
+    if (status === 403 || status === 429) {
+      console.warn(`Cricbuzz API ${status}: Rate limited or unsubscribed. Cooling down for 10 min.`);
+      cricbuzzCircuitUntil = Date.now() + CIRCUIT_TIMEOUT;
+    } else {
+      console.error(`Error fetching Cricbuzz ${category}:`, status || e.message);
+    }
+    return { data: [], error: status || e.message };
+  }
+};
 
-  const tryCricketLiveData = async () => {
-    // Fallback to the other common RapidAPI cricket host
-    const response = await cricketApi.get("/fixtures-live");
-    const results = response.data?.results || [];
-    return results.map((m: any) => ({
-      id: m.id || m.match_id,
-      title: m.series?.name || m.match_subtitle || "Live Match",
-      team_a: m.home?.name || "Team A",
-      team_b: m.away?.name || "Team B",
-      match_status: m.status || "Live",
-      score: m.live_score || "Check Live"
-    }));
-  };
+const fetchFallbackCategory = async (category: 'live' | 'upcoming' | 'recent') => {
+  if (Date.now() < fallbackCircuitUntil) {
+    return [];
+  }
 
   try {
-    let matches = await tryCricbuzz();
+    const endpoint = category === 'live' ? '/fixtures-live' : 
+                   category === 'upcoming' ? '/fixtures-upcoming' : '/fixtures-recent';
+    
+    const response = await cricketApi.get(endpoint, { timeout: 8000 });
+    const results = response.data?.results || [];
+    return results.map((m: any) => ({
+      id: m.id || m.match_id || Math.random().toString(),
+      title: m.series?.name || m.match_subtitle || "Match Info",
+      team_a: m.home?.name || "Team A",
+      team_b: m.away?.name || "Team B",
+      match_status: m.status || category,
+      score: m.live_score || (category === 'live' ? "Checking..." : category === 'upcoming' ? "Wait" : "Finished"),
+      type: category
+    }));
+  } catch (e: any) {
+    const status = e.response?.status;
+    if (status === 403 || status === 429) {
+      console.warn(`Secondary API ${status}: Cache hit or access denied. Cooling down.`);
+      fallbackCircuitUntil = Date.now() + CIRCUIT_TIMEOUT;
+    } else {
+      console.error(`Secondary API fallback failed for ${category}:`, status || e.message);
+    }
+    return [];
+  }
+};
 
-    if (matches.length === 0) {
-      // If cricbuzz has no live matches, maybe the other one does?
-      try {
-        const fallbackMatches = await tryCricketLiveData();
-        if (fallbackMatches.length > 0) matches = fallbackMatches;
-      } catch (e) {
-        console.warn("Secondary API fallback failed too");
-      }
+// Live Match Route
+app.get("/api/live-match", async (req, res) => {
+  if (!RAPIDAPI_KEY) {
+    return res.status(200).json({ error: "RAPIDAPI_KEY not found in environment.", results: [], live: [], upcoming: [], recent: [] });
+  }
+
+  // 1. Fresh Cache serving
+  if (matchCache && (Date.now() - matchCache.timestamp < FRESH_CACHE_TTL)) {
+    return res.json(matchCache.data);
+  }
+
+  // 2. If BOTH circuits broken, use stale cache (up to 24h)
+  const allBroken = Date.now() < cricbuzzCircuitUntil && Date.now() < fallbackCircuitUntil;
+  if (allBroken && matchCache && (Date.now() - matchCache.timestamp < PERSISTENT_CACHE_TTL)) {
+    console.log("Both APIs circuit broken, serving stale data...");
+    return res.json({ ...matchCache.data, _stale: true });
+  }
+
+  try {
+    // 3. Sequential Fetch
+    let liveResult = await fetchCricbuzzCategory('live');
+    let live = liveResult.data || [];
+    
+    let upcomingResult = await fetchCricbuzzCategory('upcoming');
+    let upcoming = upcomingResult.data || [];
+
+    let recentResult = await fetchCricbuzzCategory('recent');
+    let recent = recentResult.data || [];
+
+    const cricbuzzFailed = liveResult.error || upcomingResult.error || recentResult.error;
+    
+    // 4. Fallback if needed (API failure or empty live list)
+    if (live.length === 0 || cricbuzzFailed) {
+       // Only log if it's a real failure, not just a circuit breaker state
+       if (cricbuzzFailed && cricbuzzFailed !== "Circuit breaker active") {
+         console.warn(`Primary API state: ${cricbuzzFailed}. Attempting fallback...`);
+       }
+       
+       const fallbackLive = await fetchFallbackCategory('live');
+       if (fallbackLive.length > 0) live = [...live, ...fallbackLive];
+
+       if (upcoming.length === 0) upcoming = await fetchFallbackCategory('upcoming');
+       if (recent.length === 0) recent = await fetchFallbackCategory('recent');
     }
 
-    const finalizedData = { results: matches };
-    if (matches.length > 0) {
+    const finalizedData = { 
+      live, 
+      upcoming, 
+      recent, 
+      results: [...live, ...upcoming, ...recent] 
+    };
+
+    // 5. Success State Update & Cache
+    if (live.length > 0 || upcoming.length > 0 || recent.length > 0) {
       matchCache = { data: finalizedData, timestamp: Date.now() };
+      return res.json(finalizedData);
+    } 
+    
+    // 6. Hard Failure Fallback (Stale Cache)
+    if (matchCache && (Date.now() - matchCache.timestamp < PERSISTENT_CACHE_TTL)) {
+       console.log("No new data available, serving persistent cache.");
+       return res.json({ ...matchCache.data, _stale: true });
     }
-    return res.json(finalizedData);
+    
+    const guiError = cricbuzzFailed === 403 
+      ? "RapidAPI: Access Denied (403). Match Sync requires a valid RapidAPI subscription. Check your 'Cricbuzz-Cricket' and 'Cricket-Live-Data' subscriptions." 
+      : (cricbuzzFailed === 429 ? "RapidAPI: Rate limit exceeded. Try again in 15 minutes." : "No live, upcoming, or recent matches available at this moment.");
+      
+    return res.json({ error: guiError, live: [], upcoming: [], recent: [], results: [] });
 
   } catch (error: any) {
-    console.error("Primary API Error:", error.message);
-    
-    // Attempt fallback on 403/429
-    if (error.response && (error.response.status === 403 || error.response.status === 429)) {
-       try {
-         console.log("Attempting fallback to secondary API...");
-         const fallbackMatches = await tryCricketLiveData();
-         const finalizedData = { results: fallbackMatches };
-         if (fallbackMatches.length > 0) {
-           matchCache = { data: finalizedData, timestamp: Date.now() };
-         }
-         return res.json(finalizedData);
-       } catch (fallbackError: any) {
-         console.error("Fallback API also failed:", fallbackError.message);
-       }
-    }
-
-    if (matchCache) return res.json(matchCache.data);
-
-    let guiError = "API Connection Error";
-    if (error.response?.status === 403) guiError = "RapidAPI: Cricbuzz subscription required or key invalid.";
-    if (error.response?.status === 429) guiError = "RapidAPI: Rate limit exceeded. Try again in a few minutes.";
-    
-    res.json({ error: guiError, results: [] });
+    console.error("Match Fetch API Error:", error.message);
+    if (matchCache) return res.json({ ...matchCache.data, _stale: true });
+    res.json({ error: "API connection error. Try again later.", live: [], upcoming: [], recent: [], results: [] });
   }
 });
 

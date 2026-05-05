@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function incoming() { return request.resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128; }
+
+    // --- Entity Validations ---
+    function isValidAnalysisSession(data) {
+      return data.userId == request.auth.uid 
+          && data.leagueType in ['Small', 'Medium', 'Grand', 'Advanced Grand']
+          && data.teamCount is int 
+          && data.teamCount > 0 
+          && data.teamCount <= 100
+          && data.timestamp is timestamp
+          && data.result is map;
+    }
+
+    // --- Collection Rules ---
+
+    match /sessions/{sessionId} {
+      allow create: if isSignedIn() && isValidId(sessionId) && isValidAnalysisSession(incoming());
+      allow read: if isOwner(resource.data.userId);
+      allow delete: if isOwner(resource.data.userId);
+    }
+
+    match /profiles/{userId} {
+      allow get: if isOwner(userId);
+      allow write: if isOwner(userId) 
+          && (incoming().userId == userId)
+          && (incoming().keys().hasOnly(['userId', 'displayName', 'preferences']))
+          && (incoming().preferences is map);
+    }
+  }
+}

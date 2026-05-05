@@ -1,0 +1,46 @@
+{
+  "entities": {
+    "AnalysisSession": {
+      "title": "Analysis Session",
+      "description": "Records of AI analysis performed by the user",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "leagueType": { "type": "string", "enum": ["Small", "Medium", "Grand", "Advanced Grand"] },
+        "teamCount": { "type": "integer" },
+        "matchId": { "type": "string" },
+        "images": { "type": "array", "description": "Base64 or Cloud Storage URLs of uploaded images" },
+        "result": { "type": "object", "description": "The full JSON output from Gemini" }
+      },
+      "required": ["userId", "timestamp", "leagueType", "teamCount", "result"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User specific settings and preferences",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "preferences": {
+          "type": "object",
+          "properties": {
+            "optimizerEnabled": { "type": "boolean" },
+            "defaultLeague": { "type": "string" }
+          }
+        }
+      },
+      "required": ["userId"]
+    }
+  },
+  "firestore": {
+    "sessions": {
+      "schema": "AnalysisSession",
+      "description": "Historical analysis results for user reference"
+    },
+    "profiles": {
+      "schema": "UserProfile",
+      "description": "User settings"
+    }
+  }
+}

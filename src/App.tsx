@@ -55,6 +55,7 @@ export default function App() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [matchError, setMatchError] = useState<string | null>(null);
   const [activeGroupIndex, setActiveGroupIndex] = useState(0);
   const [shareAllCopied, setShareAllCopied] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -63,7 +64,7 @@ export default function App() {
   const [currentQuestion, setCurrentQuestion] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [matchId, setMatchId] = useState<string | undefined>();
-  const [upcomingMatches, setUpcomingMatches] = useState<any[]>([]);
+  const [matchData, setMatchData] = useState<{ live: any[]; upcoming: any[]; recent: any[] }>({ live: [], upcoming: [], recent: [] });
   const [isMatchesLoading, setIsMatchesLoading] = useState(false);
   const [optimizerEnabled, setOptimizerEnabled] = useState(() => {
     const saved = localStorage.getItem('cricexpert_optimizer_enabled');
@@ -262,6 +263,14 @@ export default function App() {
 
       setResult(analysis);
       saveToHistory(analysis);
+
+      // Save to Cloud if available
+      try {
+        const { saveAnalysis } = await import('./services/dbService');
+        await saveAnalysis('anon-user', leagueType, teamCount, matchId, analysis);
+      } catch (dbErr) {
+        console.warn("Cloud save skipped - Database not ready");
+      }
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Failed to analyze data. Please try again with clear images.");
@@ -373,22 +382,38 @@ export default function App() {
 
   const fetchMatches = async () => {
     setIsMatchesLoading(true);
-    setError(null);
+    setMatchError(null);
     try {
       const res = await fetch('/api/live-match');
       const data = await res.json();
       
-      if (data.error) {
-        setError(data.error);
-        setUpcomingMatches([]);
-      } else if (data.message === "No live matches") {
-        setUpcomingMatches([]);
-      } else {
-        setUpcomingMatches(data.results || []);
+      if (data?.error) {
+        setMatchError(data.error);
+        // If we have no data at all, initialize to empty
+        if (!matchData?.live?.length && !matchData?.upcoming?.length && !matchData?.recent?.length) {
+          setMatchData({ live: [], upcoming: [], recent: [] });
+        }
+      } else if (data) {
+        setMatchData({
+          live: data?.live || [],
+          upcoming: data?.upcoming || [],
+          recent: data?.recent || []
+        });
+
+        // Priority Auto-selection
+        const firstLive = (data?.live || [])[0];
+        const firstUpcoming = (data?.upcoming || [])[0];
+        const firstRecent = (data?.recent || [])[0];
+
+        if (!matchId) {
+          if (firstLive?.id) setMatchId(firstLive.id);
+          else if (firstUpcoming?.id) setMatchId(firstUpcoming.id);
+          else if (firstRecent?.id) setMatchId(firstRecent.id);
+        }
       }
     } catch (e) {
       console.error("Match fetch error", e);
-      setError("API error: Could not fetch live matches.");
+      setMatchError("Network error syncing matches.");
     } finally {
       setIsMatchesLoading(false);
     }
@@ -494,6 +519,28 @@ export default function App() {
       <div className="fixed inset-0 overflow-hidden pointer-events-none opacity-20">
         <div className="absolute -top-[10%] -left-[10%] w-[50%] h-[50%] bg-emerald-500 rounded-full blur-[150px]" />
         <div className="absolute -bottom-[10%] -right-[10%] w-[50%] h-[50%] bg-blue-600 rounded-full blur-[150px]" />
+      </div>
+
+      {/* Live Ticker for Professional Feel */}
+      <div className="bg-emerald-500/10 border-b border-emerald-500/20 py-2 overflow-hidden h-10 flex items-center relative z-20">
+        <div className="flex whitespace-nowrap animate-marquee items-center gap-8 px-4">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500">System Live</span>
+          </div>
+          {matchData?.live?.length > 0 ? (
+            matchData.live.map((m: any) => (
+              <span key={m.id} className="text-[10px] font-bold text-white/60 uppercase tracking-widest">
+                {m.team_a} vs {m.team_b}: <span className="text-white">{m.score || "Live Feed Active"}</span>
+              </span>
+            ))
+          ) : (
+            <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
+              Live Match Sync Active • Waiting for Next Fixture • Ready for Manual Analysis
+            </span>
+          )}
+          {/* Duplicate for seamless loop if needed, for now just simple */}
+        </div>
       </div>
 
       <header className="relative z-10 border-b border-white/10 bg-black/50 backdrop-blur-md sticky top-0">
@@ -647,12 +694,12 @@ export default function App() {
                     <Zap className={cn("w-3 h-3", optimizerEnabled && leagueType === 'Advanced Grand' && "animate-pulse")} /> 
                     {optimizerEnabled && leagueType === 'Advanced Grand' ? "🔥 AI GL Optimizer Active" : "Professional Cricket Analyst"}
                   </motion.div>
-                  <h2 className="text-5xl md:text-6xl font-black tracking-tighter leading-[0.95]">
-                    WINNING IS A <br/> 
-                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">PROBABILITY.</span>
+                  <h2 className="text-6xl md:text-7xl font-display font-black tracking-tighter leading-[0.9] uppercase">
+                    Master the <br/> 
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-blue-500">Numbers.</span>
                   </h2>
-                  <p className="text-white/50 text-lg leading-relaxed max-w-lg">
-                    Act like a professional. Data doesn't lie. Upload your stats images and I'll find the winning edge for your fantasy leagues.
+                  <p className="text-white/40 text-lg leading-relaxed max-w-lg font-medium">
+                    Professional-grade fantasy analytics. Advanced AI optimization for the elite 1%.
                   </p>
                 </div>
 
@@ -686,32 +733,70 @@ export default function App() {
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
                         <label className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em] flex items-center gap-2">
-                          <Zap className="w-3 h-3 text-emerald-500" /> Real-Time Match Sync
+                          <Zap className="w-3 h-3 text-emerald-500" />
+                          Match Navigator
                         </label>
                         <button 
                           onClick={fetchMatches}
                           className="text-[8px] font-bold text-emerald-500/50 hover:text-emerald-500 uppercase tracking-widest transition-colors flex items-center gap-1"
                         >
-                          <RefreshCcw className={cn("w-2.5 h-2.5", isMatchesLoading && "animate-spin")} /> Refresh
+                          <RefreshCcw className={cn("w-2.5 h-2.5", isMatchesLoading && "animate-spin")} /> Update
                         </button>
                       </div>
-                      <select 
-                        value={matchId || ''} 
-                        onChange={(e) => setMatchId(e.target.value || undefined)}
-                        className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-xs font-bold text-white/70 appearance-none focus:outline-none focus:border-emerald-500/50 transition-colors cursor-pointer"
-                      >
-                        <option value="">No Live Match Sync (Pure Image Analysis)</option>
-                        {upcomingMatches.map((m: any) => (
-                          <option key={m.id || m.match_id} value={m.id || m.match_id}>
-                            {m.title || `${m.team_a} vs ${m.team_b}`} ({m.match_status || 'Soon'}) {m.score ? `- ${m.score}` : ''}
-                          </option>
-                        ))}
-                      </select>
-                      {upcomingMatches.length === 0 && !isMatchesLoading && (
-                        <p className="text-[9px] text-white/20 italic text-center px-4">
-                          {error ? error : "No live matches detected at the moment."}
-                        </p>
-                      )}
+
+                      <div className="space-y-4">
+                        <div className="flex gap-3 overflow-x-auto pb-4 no-scrollbar -mx-2 px-2 scroll-smooth">
+                          <button
+                            onClick={() => setMatchId(undefined)}
+                            className={cn(
+                              "shrink-0 px-5 py-4 rounded-2xl border transition-all text-left min-w-[140px] glass-card",
+                              !matchId 
+                                ? "bg-emerald-500 border-emerald-400 text-black shadow-lg shadow-emerald-500/20" 
+                                : "text-white/50 hover:bg-white/10"
+                            )}
+                          >
+                            <p className="text-[9px] font-black uppercase tracking-widest mb-1 opacity-60">Manual</p>
+                            <p className="text-xs font-bold leading-tight">Image Only</p>
+                          </button>
+                          
+                          {/* Live & Upcoming Cards */}
+                          {[...(matchData?.live || []), ...(matchData?.upcoming || [])].map((m: any) => {
+                            const isLive = matchData?.live?.some(lm => lm.id === m.id);
+                            const isSelected = matchId === m.id;
+                            
+                            return (
+                              <button
+                                key={m.id}
+                                onClick={() => setMatchId(m.id)}
+                                className={cn(
+                                  "shrink-0 px-5 py-4 rounded-2xl border transition-all text-left min-w-[220px] relative overflow-hidden group glass-card",
+                                  isSelected
+                                    ? "bg-emerald-500 border-emerald-400 text-black shadow-lg shadow-emerald-500/20" 
+                                    : "text-white/70 hover:bg-white/10"
+                                )}
+                              >
+                                <div className="flex items-center justify-between mb-3">
+                                  <span className={cn(
+                                    "status-badge",
+                                    isSelected 
+                                      ? "bg-black/20 text-black" 
+                                      : isLive ? "bg-red-500/20 text-red-500 animate-pulse" : "bg-blue-500/20 text-blue-500"
+                                  )}>
+                                    {isLive ? "Live" : "Soon"}
+                                  </span>
+                                  <span className="text-[9px] font-mono opacity-50 uppercase tracking-tighter">
+                                    {m.title?.slice(0, 18)}
+                                  </span>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-xs font-black uppercase tracking-tight leading-tight">{m.team_a} vs {m.team_b}</p>
+                                  {m.score && <p className={cn("text-[10px] font-bold font-mono", isSelected ? "text-black/60" : "text-emerald-500")}>{m.score}</p>}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="space-y-4">
