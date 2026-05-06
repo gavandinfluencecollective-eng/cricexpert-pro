@@ -1,6 +1,9 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const hasValidGeminiKey = GEMINI_API_KEY && GEMINI_API_KEY !== "MY_GEMINI_API_KEY" && GEMINI_API_KEY.length > 10;
+
+const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY || "dummy_key" });
 
 export interface Player {
   name: string;

@@ -11,7 +11,8 @@ import {
   ShieldAlert, 
   ChevronRight,
   Clock,
-  MapPin
+  MapPin,
+  RefreshCcw
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
@@ -61,6 +62,9 @@ export default function LiveScoresDashboard() {
   const [completedMatches, setCompletedMatches] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dataSource, setDataSource] = useState<string>("Initializing...");
+  const [apiStatus, setApiStatus] = useState<any>(null);
+  const [showStatus, setShowStatus] = useState(false);
 
   const fetchMatches = async () => {
     try {
@@ -73,7 +77,7 @@ export default function LiveScoresDashboard() {
         return;
       }
 
-      const response = await fetch('/api/cricket-data/matches');
+      const response = await fetch('/api/live-match');
       
       if (!response.ok) {
         const text = await response.text();
@@ -92,13 +96,12 @@ export default function LiveScoresDashboard() {
       
       if (data.error) {
         setError(data.error);
-        if (data.data && Array.isArray(data.data)) {
-           // Some APIs return partial data with error
-        }
       } else {
         setLiveMatches(data.live || []);
         setUpcomingMatches(data.upcoming || []);
-        setCompletedMatches(data.completed || []);
+        setCompletedMatches(data.recent || data.completed || []);
+        setDataSource(data._source || "Live");
+        setApiStatus(data._apiStatus || null);
         setError(null);
       }
     } catch (err) {
@@ -134,36 +137,36 @@ export default function LiveScoresDashboard() {
           </div>
           
           <div className="mb-4">
-            <p className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em]">{match.league}</p>
+            <p className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em]">{match.league || "Global Match"}</p>
           </div>
 
           <div className="flex items-center justify-between gap-4 mb-6">
             <div className="flex-1 flex flex-col items-center text-center">
-              <span className="text-4xl mb-2">{match.flag_a}</span>
-              <p className="font-bold text-sm uppercase">{match.team_a}</p>
-              <p className={cn("text-xl font-mono mt-1", match.batting === 'team_a' ? "text-brand" : "text-white/50")}>{match.score_a}</p>
+              <span className="text-4xl mb-2">{match.flag_a || "🏏"}</span>
+              <p className="font-bold text-sm uppercase">{match.team_a || "Team A"}</p>
+              <p className={cn("text-xl font-mono mt-1", match.batting === 'team_a' ? "text-brand" : "text-white/50")}>{match.score_a || match.score || "0/0"}</p>
             </div>
             
             <div className="text-center px-4">
               <span className="text-white/20 font-black text-xl italic uppercase">VS</span>
-              <p className="text-[10px] font-mono text-white/30 mt-2">OVERS: {match.overs}</p>
+              <p className="text-[10px] font-mono text-white/30 mt-2 uppercase">Status: {match.status?.split(' ').slice(0, 2).join(' ') || "Live"}</p>
             </div>
 
             <div className="flex-1 flex flex-col items-center text-center">
-              <span className="text-4xl mb-2">{match.flag_b}</span>
-              <p className="font-bold text-sm uppercase">{match.team_b}</p>
-              <p className={cn("text-xl font-mono mt-1", match.batting === 'team_b' ? "text-brand" : "text-white/50")}>{match.score_b}</p>
+              <span className="text-4xl mb-2">{match.flag_b || "📡"}</span>
+              <p className="font-bold text-sm uppercase">{match.team_b || "Team B"}</p>
+              <p className={cn("text-xl font-mono mt-1", match.batting === 'team_b' ? "text-brand" : "text-white/50")}>{match.score_b || ""}</p>
             </div>
           </div>
 
           <div className="flex items-center justify-between pt-4 border-t border-white/5">
             <div className="flex items-center gap-4">
               <div>
-                <p className="text-[9px] text-white/30 uppercase font-black">CRR</p>
-                <p className="text-xs font-mono font-bold text-brand">{match.crr}</p>
+                <p className="text-[9px] text-white/30 uppercase font-black">{match.overs ? "Overs" : "Context"}</p>
+                <p className="text-xs font-mono font-bold text-brand">{match.overs || match.status || "N/A"}</p>
               </div>
             </div>
-            <p className="text-[9px] text-white/30 font-medium italic">{match.last_updated}</p>
+            <p className="text-[9px] text-white/40 font-medium italic bg-white/5 px-2 py-1 rounded">{match.venue || "Stadium"}</p>
           </div>
         </div>
       );
@@ -173,26 +176,26 @@ export default function LiveScoresDashboard() {
       return (
         <div className="glass-card glass-card-hover p-4">
           <div className="flex items-center justify-between mb-4">
-             <span className="text-[9px] font-black text-brand uppercase tracking-widest">{match.league}</span>
-             <span className="text-[9px] font-mono text-white/30">{match.date}</span>
+             <span className="text-[9px] font-black text-brand uppercase tracking-widest">{match.league || "Tournament"}</span>
+             <span className="text-[9px] font-mono text-white/30">{match.date || "TBD"}</span>
           </div>
           <div className="flex items-center justify-between gap-2 border-b border-white/5 pb-4 mb-4">
             <div className="flex items-center gap-3">
-              <span className="text-2xl">{match.flag_a}</span>
-              <span className="text-xs font-bold uppercase">{match.team_a}</span>
+              <span className="text-2xl">{match.flag_a || "🏏"}</span>
+              <span className="text-xs font-bold uppercase">{match.team_a || "Team A"}</span>
             </div>
             <span className="text-[10px] font-black text-white/10 italic">VS</span>
             <div className="flex items-center gap-3">
-              <span className="text-xs font-bold uppercase">{match.team_b}</span>
-              <span className="text-2xl">{match.flag_b}</span>
+              <span className="text-xs font-bold uppercase">{match.team_b || "Team B"}</span>
+              <span className="text-2xl">{match.flag_b || "📡"}</span>
             </div>
           </div>
           <div className="flex items-center gap-3 text-white/40">
             <Clock className="w-3 h-3" />
-            <span className="text-[10px] font-bold">{match.time}</span>
+            <span className="text-[10px] font-bold">{match.time || match.status || "Check App"}</span>
             <span className="w-1 h-1 bg-white/10 rounded-full" />
             <MapPin className="w-3 h-3" />
-            <span className="text-[10px] font-bold uppercase tracking-tighter truncate">{match.venue}</span>
+            <span className="text-[10px] font-bold uppercase tracking-tighter truncate max-w-[100px]">{match.venue || "Stadium"}</span>
           </div>
         </div>
       );
@@ -201,27 +204,27 @@ export default function LiveScoresDashboard() {
     return (
       <div className="bg-white/[0.01] border border-white/5 rounded-2xl p-4 opacity-70 hover:opacity-100 transition-opacity">
         <div className="flex items-center justify-between mb-3">
-           <span className="text-[9px] font-black text-white/20 uppercase tracking-widest">{match.league}</span>
+           <span className="text-[9px] font-black text-white/20 uppercase tracking-widest">{match.league || "Match"}</span>
            <span className="flex items-center gap-1 text-[9px] font-black text-white/20 uppercase">
              <CheckCircle2 className="w-3 h-3" /> Result
            </span>
         </div>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <span>{match.flag_a}</span>
-            <span className="text-xs font-bold">{match.team_a}</span>
+            <span>{match.flag_a || "🏏"}</span>
+            <span className="text-xs font-bold">{match.team_a || "Team A"}</span>
           </div>
-          <span className="text-xs font-mono font-bold">{match.score_a}</span>
+          <span className="text-xs font-mono font-bold">{match.score_a || match.score || "DNF"}</span>
         </div>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <span>{match.flag_b}</span>
-            <span className="text-xs font-bold">{match.team_b}</span>
+            <span>{match.flag_b || "📡"}</span>
+            <span className="text-xs font-bold">{match.team_b || "Team B"}</span>
           </div>
-          <span className="text-xs font-mono font-bold">{match.score_b}</span>
+          <span className="text-xs font-mono font-bold">{match.score_b || ""}</span>
         </div>
         <div className="pt-2 border-t border-white/5">
-          <p className="text-[10px] font-bold text-brand uppercase">{match.result}</p>
+          <p className="text-[10px] font-bold text-brand uppercase">{match.result || match.status || "Final Score"}</p>
         </div>
       </div>
     );
@@ -332,6 +335,74 @@ export default function LiveScoresDashboard() {
   return (
     <div className="min-h-screen bg-bg-dark text-white font-sans selection:bg-brand selection:text-black">
       
+      {/* API Status Modal */}
+      <AnimatePresence>
+        {showStatus && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowStatus(false)}
+              className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[200] flex items-center justify-center p-6"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                onClick={e => e.stopPropagation()}
+                className="max-w-md w-full bg-[#111] border border-white/10 rounded-3xl p-8 shadow-2xl"
+              >
+                <div className="flex items-center justify-between mb-8">
+                  <h2 className="text-xl font-black uppercase italic tracking-tighter">System Health</h2>
+                  <button onClick={() => setShowStatus(false)} className="p-2 hover:bg-white/5 rounded-full">
+                    <X className="w-6 h-6 text-white/30" />
+                  </button>
+                </div>
+
+                <div className="space-y-6">
+                  {apiStatus ? Object.entries(apiStatus).map(([name, status]: [string, any]) => (
+                    <div key={name} className="flex items-center justify-between p-4 bg-white/[0.02] border border-white/5 rounded-2xl">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-black uppercase text-white/30 tracking-widest">{name} API Provider</span>
+                        <span className={cn("text-xs font-bold mt-1", (status === 'OK' || status === 'Current') ? "text-green-500" : "text-amber-500")}>
+                          {status}
+                        </span>
+                      </div>
+                      {(status === 'OK' || status === 'Current') ? (
+                        <div className="w-2 h-2 bg-green-500 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.5)]" />
+                      ) : (
+                        <ShieldAlert className="w-4 h-4 text-amber-500" />
+                      )}
+                    </div>
+                  )) : (
+                    <p className="text-sm text-white/40 italic">Diagnostic data not yet available. Refreshing...</p>
+                  )}
+                  
+                  <div className="pt-6 border-t border-white/5">
+                    <div className="bg-brand/5 p-4 rounded-xl border border-brand/20">
+                      <h4 className="text-[10px] font-black text-brand uppercase mb-2">Resilience Report</h4>
+                      <p className="text-[11px] text-white/60 leading-relaxed space-y-1">
+                        <span className="block">• <span className="text-white font-bold">429/403 Circuit Active:</span> Provider quota reached. System is automatically bypassing this provider for 15 minutes.</span>
+                        <span className="block">• <span className="text-white font-bold">Satellite Simulation:</span> If you see this source, it means global APIs are currently rate-limited. We are simulating live data so you can continue testing.</span>
+                        <span className="block">• <span className="text-white font-bold">Data Accuracy:</span> Use "Force Resync" if scores seem stuck. Standard sync interval is 60s.</span>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => { fetchMatches(); setShowStatus(false); }}
+                  className="w-full mt-8 py-4 bg-white text-black font-black uppercase rounded-2xl hover:bg-brand transition-colors text-sm"
+                >
+                  Force Resync
+                </button>
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* Sidebar Overlay */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -414,10 +485,16 @@ export default function LiveScoresDashboard() {
           </div>
           
           <div className="hidden md:flex items-center gap-8">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-brand/10 border border-brand/20">
-              <span className="w-2 h-2 bg-brand rounded-full animate-pulse" />
-              <span className="text-[10px] font-black uppercase text-brand tracking-widest">Network Live</span>
-            </div>
+            <button 
+              onClick={() => setShowStatus(true)}
+              className="flex flex-col items-end hover:opacity-80 transition-opacity"
+            >
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-brand/10 border border-brand/20 mb-1">
+                <span className="w-2 h-2 bg-brand rounded-full animate-pulse" />
+                <span className="text-[10px] font-black uppercase text-brand tracking-widest">Network Live</span>
+              </div>
+              <span className="text-[8px] font-black uppercase text-white/20 tracking-widest">Source: {dataSource}</span>
+            </button>
           </div>
         </div>
       </header>
@@ -475,9 +552,18 @@ export default function LiveScoresDashboard() {
                     <h3 className="text-3xl font-black uppercase tracking-tighter italic flex items-center gap-3">
                       <Zap className="w-8 h-8 text-brand animate-pulse" /> Global Live Feed
                     </h3>
-                    <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20">
-                      <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
-                      <span className="text-[10px] font-black text-red-500 uppercase">Updating Real-time</span>
+                    <div className="flex items-center gap-4">
+                      <button 
+                        onClick={() => { setIsLoading(true); fetchMatches(); }}
+                        className="p-2 hover:bg-white/5 rounded-full transition-colors text-white/40 hover:text-white"
+                        title="Refresh Live Scores"
+                      >
+                        <RefreshCcw className={cn("w-5 h-5", isLoading && "animate-spin")} />
+                      </button>
+                      <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20">
+                        <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+                        <span className="text-[10px] font-black text-red-500 uppercase">Updating Real-time</span>
+                      </div>
                     </div>
                   </div>
                   

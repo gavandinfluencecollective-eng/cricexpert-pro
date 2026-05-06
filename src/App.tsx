@@ -67,6 +67,10 @@ export default function App() {
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [matchId, setMatchId] = useState<string | undefined>();
   const [matchData, setMatchData] = useState<{ live: any[]; upcoming: any[]; recent: any[] }>({ live: [], upcoming: [], recent: [] });
+  const [matchInsights, setMatchInsights] = useState<any>(null);
+  const [matchNews, setMatchNews] = useState<any[]>([]);
+  const [isInsightsLoading, setIsInsightsLoading] = useState(false);
+  const [isNewsLoading, setIsNewsLoading] = useState(false);
   const [isMatchesLoading, setIsMatchesLoading] = useState(false);
   const [optimizerEnabled, setOptimizerEnabled] = useState(() => {
     const saved = localStorage.getItem('cricexpert_optimizer_enabled');
@@ -75,10 +79,69 @@ export default function App() {
   const [showDrawer, setShowDrawer] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [appView, setAppView] = useState<'optimizer' | 'live-scores'>('optimizer');
+  const [afterTossMode, setAfterTossMode] = useState(false);
+  const [playingXIText, setPlayingXIText] = useState('');
+  const [impactPlayersText, setImpactPlayersText] = useState('');
+  const [isAfterTossLoading, setIsAfterTossLoading] = useState(false);
+  const [advancedTossSettings, setAdvancedTossSettings] = useState({
+    includeImpact: true,
+    boostDifferential: true,
+    randomCaptain: true,
+    teamCount: 40
+  });
 
   useEffect(() => {
     localStorage.setItem('cricexpert_optimizer_enabled', String(optimizerEnabled));
   }, [optimizerEnabled]);
+
+  const handleAfterTossOptimize = async () => {
+    if (images.length === 0 && !playingXIText.trim()) {
+      setError("Please provide Playing XI text or upload images.");
+      return;
+    }
+    setIsAfterTossLoading(true);
+    setError(null);
+    try {
+      const base64Images = await Promise.all(
+        images.map(async img => ({
+          data: await fileToBase64(img.file),
+          mimeType: img.file.type
+        }))
+      );
+
+      const res = await fetch('/api/after-toss-optimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          playingXIText,
+          impactPlayersText,
+          images: base64Images,
+          matchId,
+          leagueType,
+          teamCount: advancedTossSettings.teamCount,
+          settings: advancedTossSettings
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Optimization failed");
+
+      if (data.teams) {
+        setResult(data);
+        saveToHistory(data);
+        setAppView('optimizer'); // Switch view if needed
+      }
+    } catch (err: any) {
+      console.error(err);
+      if (err.message?.includes("GEMINI_API_KEY_INVALID") || err.message?.includes("API key not valid")) {
+        setError("CRITICAL: Your Gemini API key is invalid or missing. Please go to AI Studio Settings -> Secrets and add GEMINI_API_KEY.");
+      } else {
+        setError(err.message || "Failed to execute After Toss Mode.");
+      }
+    } finally {
+      setIsAfterTossLoading(false);
+    }
+  };
 
   const handleRegenerateAfterToss = async () => {
     if (images.length === 0) return;
@@ -102,14 +165,13 @@ export default function App() {
           leagueType,
           teamCount,
           matchId,
-          // Mocking toss info for now, in a real app this would come from a live feed or user input
-          tossInfo: { winner: "Home Team", choice: "Batting First" },
-          playingXI: [] // Empty means AI should detect from images but filter non-playing if possible
+          tossInfo: null, // Let server fetch if matchId exists
+          playingXI: null // Let server fetch if matchId exists
         })
       });
 
-      if (!res.ok) throw new Error("Regeneration failed");
       const analysis = await res.json();
+      if (!res.ok) throw new Error(analysis.error || "Regeneration failed");
 
       if (analysis.teams) {
         setResult(analysis);
@@ -123,9 +185,9 @@ export default function App() {
         };
         setHistory(prev => [newHistoryItem, ...prev].slice(0, 5));
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError("Failed to regenerate post-toss teams. Please try again.");
+      setError(err.message || "Failed to regenerate post-toss teams. Please try again.");
     } finally {
       setIsRegenerating(false);
     }
@@ -276,7 +338,11 @@ export default function App() {
       }
     } catch (err: any) {
       console.error(err);
-      setError(err?.message || "Failed to analyze data. Please try again with clear images.");
+      if (err.message?.includes("GEMINI_API_KEY_INVALID") || err.message?.includes("API key not valid")) {
+        setError("CRITICAL: Gemini API key error. Check your Secrets panel.");
+      } else {
+        setError(err.message || "Failed to analyze data. Please try again with clear images.");
+      }
     } finally {
       setIsAnalyzing(false);
     }
@@ -392,7 +458,6 @@ export default function App() {
       
       if (data?.error) {
         setMatchError(data.error);
-        // If we have no data at all, initialize to empty
         if (!matchData?.live?.length && !matchData?.upcoming?.length && !matchData?.recent?.length) {
           setMatchData({ live: [], upcoming: [], recent: [] });
         }
@@ -403,15 +468,14 @@ export default function App() {
           recent: data?.recent || []
         });
 
-        // Priority Auto-selection
         const firstLive = (data?.live || [])[0];
         const firstUpcoming = (data?.upcoming || [])[0];
         const firstRecent = (data?.recent || [])[0];
 
         if (!matchId) {
-          if (firstLive?.id) setMatchId(firstLive.id);
-          else if (firstUpcoming?.id) setMatchId(firstUpcoming.id);
-          else if (firstRecent?.id) setMatchId(firstRecent.id);
+          if (firstLive?.id) handleMatchSelect(firstLive.id);
+          else if (firstUpcoming?.id) handleMatchSelect(firstUpcoming.id);
+          else if (firstRecent?.id) handleMatchSelect(firstRecent.id);
         }
       }
     } catch (e) {
@@ -419,6 +483,37 @@ export default function App() {
       setMatchError("Network error syncing matches.");
     } finally {
       setIsMatchesLoading(false);
+    }
+  };
+
+  const handleMatchSelect = async (id: string) => {
+    setMatchId(id);
+    setIsInsightsLoading(true);
+    setIsNewsLoading(true);
+    setMatchNews([]);
+    
+    // Parallel fetch for speed
+    try {
+      const [insightRes, newsRes] = await Promise.all([
+        fetch(`/api/matches/${id}/insights`),
+        fetch(`/api/matches/${id}/news`)
+      ]);
+      
+      const insightData = await insightRes.json();
+      const newsData = await newsRes.json();
+      
+      if (insightData && !insightData.error) {
+        setMatchInsights(insightData);
+      }
+      
+      if (newsData && !newsData.error) {
+        setMatchNews(newsData.news || []);
+      }
+    } catch (e) {
+      console.warn("Insights/News fetch failed", e);
+    } finally {
+      setIsInsightsLoading(false);
+      setIsNewsLoading(false);
     }
   };
 
@@ -516,6 +611,35 @@ export default function App() {
 
                 <div className="space-y-4">
                   <h3 className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em] px-2">Advanced Features</h3>
+                  
+                  {result && (
+                    <div className="p-4 rounded-3xl bg-amber-500/5 border border-amber-500/10 space-y-4 mb-4">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <label className="text-xs font-bold text-white flex items-center gap-2">
+                             After Toss Mode
+                          </label>
+                          <p className="text-[9px] text-white/30 uppercase tracking-widest">Real-Time Extraction</p>
+                        </div>
+                        <button 
+                          onClick={() => setAfterTossMode(!afterTossMode)}
+                          className={cn(
+                            "relative w-12 h-6 rounded-full transition-colors",
+                            afterTossMode ? "bg-amber-500" : "bg-white/10"
+                          )}
+                        >
+                          <motion.div 
+                            animate={{ x: afterTossMode ? 24 : 4 }}
+                            className="absolute top-1 left-0 w-4 h-4 bg-white rounded-full shadow-lg"
+                          />
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-amber-500/60 leading-relaxed font-bold bg-amber-500/10 p-3 rounded-xl border border-amber-500/10 italic">
+                        "Enable strictly after the toss. Paste playing XI or upload team sheets to instantly generate 40 optimized teams."
+                      </p>
+                    </div>
+                  )}
+
                   <div className="p-4 rounded-3xl bg-emerald-500/5 border border-emerald-500/10 space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="space-y-0.5">
@@ -538,7 +662,7 @@ export default function App() {
                       </button>
                     </div>
                     <p className="text-[10px] text-emerald-500/60 leading-relaxed font-medium bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/10 italic">
-                      "Advanced GL Optimizer increases chances in Grand League by simulating extreme match outcomes."
+                      "Advanced GL Optimizer increases chances in Grand League by simulating extreme match outcomes using historical H2H and Venue statistics."
                     </p>
                   </div>
                 </div>
@@ -648,6 +772,209 @@ export default function App() {
           <LiveScoresDashboard />
         ) : (
           <AnimatePresence mode="wait">
+            {afterTossMode && result && (
+              <motion.div 
+                key="after-toss"
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="p-8 rounded-[3.5rem] bg-[#0a0a0a] border-4 border-cyan-500/30 shadow-[0_0_100px_rgba(6,182,212,0.15)] space-y-8 relative overflow-hidden mb-12"
+              >
+                {/* Neon Accents */}
+                <div className="absolute -top-24 -left-24 w-64 h-64 bg-cyan-500/10 blur-[100px] rounded-full" />
+                <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-emerald-500/10 blur-[100px] rounded-full" />
+
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+                  <div className="flex items-center gap-6">
+                    <div className="w-16 h-16 bg-gradient-to-br from-cyan-500 to-emerald-500 rounded-3xl flex items-center justify-center shadow-[0_0_40px_rgba(6,182,212,0.4)]">
+                      <Zap className="w-8 h-8 text-black" />
+                    </div>
+                    <div>
+                      <h3 className="text-3xl font-black uppercase italic tracking-tighter text-white">After Toss Team Builder</h3>
+                      <p className="text-[11px] font-black text-cyan-400 uppercase tracking-[0.3em]">Precision GL Optimization</p>
+                    </div>
+                  </div>
+
+                  {/* Mode Selector */}
+                  <div className="flex bg-white/5 p-1.5 rounded-2xl border border-white/5">
+                    {(['Small', 'Medium', 'Grand', 'Advanced Grand'] as const).map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => setLeagueType(type)}
+                        className={cn(
+                          "px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                          leagueType === type 
+                            ? "bg-cyan-500 text-black shadow-lg shadow-cyan-500/20" 
+                            : "text-white/40 hover:text-white/60"
+                        )}
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 relative z-10">
+                  {/* Inputs Column */}
+                  <div className="space-y-6">
+                    {/* Visual Image Upload for After Toss */}
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between px-1">
+                        <label className="text-[11px] font-black text-cyan-400/60 uppercase tracking-[0.3em] flex items-center gap-2">
+                           Multi-Modal Analysis (Images)
+                        </label>
+                        {images.length > 0 && (
+                          <button 
+                            onClick={() => setImages([])}
+                            className="text-[9px] font-black text-red-400/60 uppercase hover:text-red-400 transition-colors"
+                          >
+                            Clear All
+                          </button>
+                        )}
+                      </div>
+                      <div 
+                        {...getRootProps()} 
+                        className={cn(
+                          "border-2 border-dashed rounded-[2.5rem] p-10 transition-all flex flex-col items-center justify-center gap-4 cursor-pointer group/upload",
+                          isDragActive ? "border-cyan-500 bg-cyan-500/5" : "border-white/5 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.04]"
+                        )}
+                      >
+                        <input {...getInputProps()} />
+                        <div className="w-12 h-12 bg-cyan-500/10 rounded-2xl flex items-center justify-center group-hover/upload:scale-110 transition-transform">
+                          <Upload className="w-6 h-6 text-cyan-400" />
+                        </div>
+                        <div className="text-center space-y-1">
+                          <p className="font-bold text-sm">Upload Team Sheet</p>
+                          <p className="text-[10px] text-white/20 font-black tracking-widest uppercase italic">AI will extract squads automatically</p>
+                        </div>
+                      </div>
+                      
+                      {images.length > 0 && (
+                        <div className="grid grid-cols-5 gap-3">
+                          {images.map((img, idx) => (
+                            <motion.div 
+                              key={img.preview}
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              className="relative aspect-square rounded-2xl overflow-hidden border border-white/5 group shadow-lg"
+                            >
+                              <img src={img.preview} alt="" className="w-full h-full object-cover" />
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); removeImage(idx); }}
+                                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                              >
+                                <X className="w-4 h-4 text-red-500" />
+                              </button>
+                            </motion.div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-[11px] font-black text-cyan-400/60 uppercase tracking-[0.3em] px-1 flex items-center gap-2">
+                         Playing XI Confirmed (Text)
+                         <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" />
+                      </label>
+                      <textarea
+                        placeholder="Paste confirmed Playing XI (Team 1 & Team 2)..."
+                        value={playingXIText}
+                        onChange={(e) => setPlayingXIText(e.target.value)}
+                        className="w-full h-44 bg-black/60 border-2 border-white/5 rounded-3xl p-6 text-sm font-medium focus:outline-none focus:border-cyan-500/40 transition-all resize-none placeholder:text-white/10 text-cyan-50/90"
+                      />
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-[11px] font-black text-white/30 uppercase tracking-[0.3em] px-1">
+                         Impact Players (Optional)
+                      </label>
+                      <textarea
+                        placeholder="Paste 2–4 possible Impact Players..."
+                        value={impactPlayersText}
+                        onChange={(e) => setImpactPlayersText(e.target.value)}
+                        className="w-full h-28 bg-black/40 border-2 border-white/5 rounded-3xl p-6 text-sm font-medium focus:outline-none focus:border-white/10 transition-all resize-none placeholder:text-white/10"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Settings Column */}
+                  <div className="space-y-8 bg-white/[0.02] p-8 rounded-[2.5rem] border border-white/5">
+                    <div className="space-y-6">
+                      <h4 className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                        <Settings className="w-3.5 h-3.5" /> Advanced GL Settings
+                      </h4>
+
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-white/60 uppercase tracking-wider">Number of Teams</span>
+                          <span className="text-xl font-black italic text-cyan-400">{advancedTossSettings.teamCount}</span>
+                        </div>
+                        <input 
+                          type="range"
+                          min="10"
+                          max="100"
+                          step="5"
+                          value={advancedTossSettings.teamCount}
+                          onChange={(e) => setAdvancedTossSettings({...advancedTossSettings, teamCount: parseInt(e.target.value)})}
+                          className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer accent-cyan-500"
+                        />
+                        <div className="flex justify-between text-[9px] font-bold text-white/20 uppercase tracking-widest px-1">
+                          <span>10</span>
+                          <span>100</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4 pt-4">
+                        {[
+                          { key: 'includeImpact', label: 'Include Impact Players', desc: 'Used in 30-40% of squads' },
+                          { key: 'boostDifferential', label: 'Boost Differentials', desc: '15% selection probability hike' },
+                          { key: 'randomCaptain', label: 'Random Captain Variation', desc: 'High entropy in C/VC rotation' }
+                        ].map((opt) => (
+                          <div key={opt.key} className="flex items-center justify-between group cursor-pointer" onClick={() => setAdvancedTossSettings({...advancedTossSettings, [opt.key]: !advancedTossSettings[opt.key as keyof typeof advancedTossSettings]})}>
+                            <div className="space-y-0.5">
+                              <p className="text-xs font-bold text-white/80 group-hover:text-white transition-colors">{opt.label}</p>
+                              <p className="text-[9px] text-white/20 uppercase font-black tracking-widest">{opt.desc}</p>
+                            </div>
+                            <div className={cn(
+                              "w-5 h-5 rounded-md border-2 transition-all flex items-center justify-center",
+                              advancedTossSettings[opt.key as keyof typeof advancedTossSettings] 
+                                ? "bg-cyan-500 border-cyan-500" 
+                                : "border-white/10 bg-transparent"
+                            )}>
+                              {advancedTossSettings[opt.key as keyof typeof advancedTossSettings] && <CheckCheck className="w-3.5 h-3.5 text-black" />}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleAfterTossOptimize}
+                      disabled={isAfterTossLoading || (!playingXIText.trim() && images.length === 0)}
+                      className={cn(
+                        "w-full h-16 rounded-2xl font-black uppercase tracking-[0.2em] text-sm transition-all flex items-center justify-center gap-4 group mt-4",
+                        isAfterTossLoading 
+                          ? "bg-white/10 text-white/30 cursor-not-allowed" 
+                          : "bg-white text-black hover:bg-cyan-500 shadow-2xl shadow-cyan-500/20 active:scale-95"
+                      )}
+                    >
+                      {isAfterTossLoading ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          Generating {advancedTossSettings.teamCount} Teams...
+                        </>
+                      ) : (
+                        <>
+                          <Activity className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+                          Generate GL Teams
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
             {showHistory ? (
             <motion.div
               key="history"
@@ -810,7 +1137,7 @@ export default function App() {
                       <div className="space-y-4">
                         <div className="flex gap-3 overflow-x-auto pb-4 no-scrollbar -mx-2 px-2 scroll-smooth">
                           <button
-                            onClick={() => setMatchId(undefined)}
+                            onClick={() => { setMatchId(undefined); setMatchInsights(null); }}
                             className={cn(
                               "shrink-0 px-5 py-4 rounded-2xl border transition-all text-left min-w-[140px] glass-card",
                               !matchId 
@@ -830,7 +1157,7 @@ export default function App() {
                             return (
                               <button
                                 key={m.id}
-                                onClick={() => setMatchId(m.id)}
+                                onClick={() => handleMatchSelect(m.id)}
                                 className={cn(
                                   "shrink-0 px-5 py-4 rounded-2xl border transition-all text-left min-w-[220px] relative overflow-hidden group glass-card",
                                   isSelected
@@ -861,6 +1188,87 @@ export default function App() {
                         </div>
                       </div>
                     </div>
+
+                    {/* Insights Panel */}
+                    <AnimatePresence>
+                      {matchId && (
+                        <motion.div 
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="p-5 rounded-[2rem] bg-white/[0.03] border border-white/10 space-y-4">
+                            <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                              <h4 className="text-[10px] font-black uppercase text-emerald-500 tracking-[0.2em] flex items-center gap-2">
+                                <History className="w-3.5 h-3.5" /> Historical Insights
+                              </h4>
+                              {isInsightsLoading && <Loader2 className="w-3 h-3 animate-spin text-emerald-500" />}
+                            </div>
+
+                            {matchInsights ? (
+                              <div className="grid grid-cols-2 gap-4">
+                                <div className="bg-white/5 p-3 rounded-2xl border border-white/5">
+                                  <p className="text-[8px] font-black text-white/30 uppercase tracking-widest mb-2">H2H Performance</p>
+                                  <div className="space-y-1">
+                                    <div className="flex justify-between text-[10px] font-bold">
+                                      <span>Team A Won</span>
+                                      <span className="text-emerald-500">{matchInsights.h2h?.team1_win || "N/A"}</span>
+                                    </div>
+                                    <div className="flex justify-between text-[10px] font-bold">
+                                      <span>Team B Won</span>
+                                      <span className="text-emerald-500">{matchInsights.h2h?.team2_win || "N/A"}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="bg-white/5 p-3 rounded-2xl border border-white/5">
+                                  <p className="text-[8px] font-black text-white/30 uppercase tracking-widest mb-2">Venue Bias</p>
+                                  <div className="space-y-1">
+                                    <div className="flex justify-between text-[10px] font-bold">
+                                      <span>Avg 1st Innings</span>
+                                      <span className="text-blue-400">{matchInsights.venue?.avg_1st_innings || "N/A"}</span>
+                                    </div>
+                                    <div className="flex justify-between text-[10px] font-bold">
+                                      <span>Pitch Type</span>
+                                      <span className="text-blue-400">{matchInsights.venue?.pitch_type || "Balanced"}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-white/20 italic">
+                                {isInsightsLoading ? "Synchronizing historical database..." : "No specific historical data available for this match yet."}
+                              </p>
+                            )}
+
+                            {/* Team News Section */}
+                            <div className="mt-4 pt-4 border-t border-white/5">
+                              <h4 className="text-[10px] font-black uppercase text-amber-500 tracking-[0.2em] flex items-center gap-2 mb-3">
+                                <Zap className="w-3.5 h-3.5" /> Team News & Updates
+                              </h4>
+                              {isNewsLoading ? (
+                                <div className="flex items-center gap-2 text-[10px] text-white/30">
+                                  <Loader2 className="w-3 h-3 animate-spin" /> Fetching latest reports...
+                                </div>
+                              ) : matchNews.length > 0 ? (
+                                <div className="space-y-3">
+                                  {matchNews.slice(0, 3).map((item: any, idx: number) => (
+                                    <div key={idx} className="bg-white/[0.02] p-3 rounded-xl border border-white/5">
+                                      <h5 className="text-[10px] font-bold text-white/80 mb-1">{item.story?.hline || "Update"}</h5>
+                                      <p className="text-[9px] text-white/40 line-clamp-2 leading-relaxed">
+                                        {item.story?.intro || "Check full news report for injury and XI updates."}
+                                      </p>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-[10px] text-white/20 italic">No critical team updates or injury reports found for this match.</p>
+                              )}
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
 
                     <div className="space-y-4">
                       <div className="flex items-center justify-between">
@@ -1373,12 +1781,8 @@ export default function App() {
                       <TeamCard 
                         key={team.id} 
                         team={team} 
-                        count={team.players.length} 
                         index={globalIdx} 
                         leagueType={leagueType} 
-                        images={images}
-                        analysisResult={result!}
-                        onSwapPlayer={handleSwapPlayer}
                       />
                     );
                   })}
@@ -1395,297 +1799,109 @@ export default function App() {
 
 interface TeamCardProps {
   team: FantasyTeam;
-  count: number;
   index: number;
   leagueType: string;
-  images: { file: File; preview: string }[];
-  analysisResult: AnalysisResult;
-  onSwapPlayer: (teamIndex: number, playerToReplace: string, newPlayer: string) => void;
 }
 
-const TeamCard: React.FC<TeamCardProps> = ({ team, count, index, leagueType, images, analysisResult, onSwapPlayer }) => {
+const TeamCard: React.FC<TeamCardProps> = ({ team, index, leagueType }) => {
   const [copied, setCopied] = React.useState(false);
-  const [swappingPlayer, setSwappingPlayer] = React.useState<string | null>(null);
-  const [recommendations, setRecommendations] = React.useState<{ name: string; reason: string }[]>([]);
-  const [isFetchingRecs, setIsFetchingRecs] = React.useState(false);
 
-  const handleShare = () => {
-    const teamSummary = `🏆 CricExpert Pro - Optimized Squad 🏆
+  const handleCopyTeam = () => {
+    const teamSummary = `🏆 AFTER TOSS SQUAD #${index + 1} 🏆
 League: ${leagueType}
-Mode: ${team.mode || leagueType}
-Risk: ${team.riskLevel || 'N/A'}
-Scenario: ${team.scenario || 'N/A'}
-
-SQUAD:
-${team.players.map((p, i) => `${(i + 1).toString().padStart(2, '0')}. ${p}${p === team.captain ? ' (C)' : ''}${p === team.viceCaptain ? ' (VC)' : ''}`).join('\n')}
-
-DIFFERENTIALS:
-${team.differentials?.join(', ') || 'None'}
-
-BACKUPS:
-${team.backupPlayers?.join(', ') || 'None'}
+Players:
+${team.players.map((p, i) => `${i + 1}. ${p}${p === team.captain ? ' (C)' : ''}${p === team.viceCaptain ? ' (VC)' : ''}`).join('\n')}
 
 Captain: ${team.captain}
 Vice-Captain: ${team.viceCaptain}
-
-Strategy: ${team.rationale}`;
+${team.tossRationale ? `\nToss Edge: ${team.tossRationale}` : ''}`;
     
     navigator.clipboard.writeText(teamSummary);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = error => reject(error);
-    });
-  };
-
-  const handleTriggerSwap = async (playerName: string) => {
-    setSwappingPlayer(playerName);
-    setRecommendations([]);
-    setIsFetchingRecs(true);
-
-    try {
-      const base64Images = await Promise.all(
-        images.map(async img => ({
-          data: await fileToBase64(img.file),
-          mimeType: img.file.type
-        }))
-      );
-
-      const res = await suggestReplacement(base64Images, analysisResult, index, playerName);
-      setRecommendations(res.recommendations);
-    } catch (err) {
-      console.error("Failed to get suggestions", err);
-    } finally {
-      setIsFetchingRecs(false);
-    }
-  };
-
-  const handleConfirmSwap = (newPlayer: string) => {
-    if (swappingPlayer) {
-      onSwapPlayer(index, swappingPlayer, newPlayer);
-      setSwappingPlayer(null);
-      setRecommendations([]);
-    }
-  };
-
   return (
     <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
       transition={{ delay: (index % 10) * 0.05 }}
-      whileHover={{ y: -8, scale: 1.01 }}
-      className="bg-[#111114] border border-white/5 rounded-2xl overflow-hidden shadow-2xl relative group dashboard-border flex flex-col"
+      className="p-1 rounded-[2.5rem] bg-gradient-to-br from-white/10 to-transparent hover:from-cyan-500/20 transition-all duration-500 group shadow-xl"
     >
-      <div className="p-5 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
-        <div className="flex items-center gap-3">
-          <div className="text-[10px] font-mono text-emerald-500 border border-emerald-500/30 px-2 py-0.5 rounded uppercase tracking-tighter">
-            PRO-OPT-{(index + 1).toString().padStart(3, '0')}
+      <div className="bg-[#0a0a0a] rounded-[2.4rem] p-6 h-full space-y-6 relative overflow-hidden border border-white/5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+             <div className="w-8 h-8 rounded-full bg-cyan-500 flex items-center justify-center text-black font-black text-xs shadow-[0_0_15px_rgba(6,182,212,0.3)]">
+               {index + 1}
+             </div>
+             <div>
+               <h4 className="text-[10px] font-black uppercase tracking-widest text-white/30">Team Number</h4>
+               <p className="text-xs font-bold text-white uppercase">{team.teamBalance || 'Balanced (11)'}</p>
+             </div>
           </div>
-          <span className="text-[10px] font-black text-white/30 uppercase tracking-widest">{leagueType}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="w-1 h-1 bg-emerald-500 rounded-full animate-pulse" />
-          <span className="text-[10px] font-mono text-white/20">STABLE</span>
-        </div>
-      </div>
-
-      <div className="p-6 space-y-6 flex-1">
-        <div className="space-y-4">
-          {team.scenario && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[8px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded border border-emerald-500/20">
-                {team.scenario}
-              </span>
-              {team.riskLevel && (
-                <span className={cn(
-                  "text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded border",
-                  (team.riskLevel === 'High Risk' || team.riskLevel === 'High' || team.riskLevel === 'Extreme') ? "bg-red-500/10 text-red-500 border-red-500/20" : "bg-blue-500/10 text-blue-400 border-blue-500/20"
-                )}>
-                  {team.riskLevel}
-                </span>
-              )}
-              {team.mode && (
-                <span className="text-[8px] font-black uppercase tracking-widest bg-white/5 text-white/40 px-2 py-0.5 rounded border border-white/10">
-                  {team.mode}
-                </span>
-              )}
-            </div>
+          {team.isImpactUsed && (
+            <span className="text-[8px] font-black bg-cyan-500/10 text-cyan-400 px-2 py-0.5 rounded border border-cyan-500/20">IMPACT PLAYER</span>
           )}
-
-          <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1">
-            <div className="text-[9px] font-bold text-white/30 uppercase tracking-widest flex items-center gap-1.5">
-              <Zap className="w-2.5 h-2.5 text-emerald-500" /> Captain
-            </div>
-            <p className="font-display text-lg tracking-tight uppercase truncate">{team.captain}</p>
-          </div>
-          <div className="space-y-1">
-            <div className="text-[9px] font-bold text-white/30 uppercase tracking-widest flex items-center gap-1.5">
-              <ShieldCheck className="w-2.5 h-2.5 text-blue-500" /> Vice Captain
-            </div>
-            <p className="font-display text-lg tracking-tight uppercase truncate">{team.viceCaptain}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-          <div className="text-[9px] font-bold text-white/30 uppercase tracking-widest">Calculated Squad</div>
-          <div className="grid grid-cols-1 gap-1.5">
-            {team.players.map((player, idx) => (
-              <div 
-                key={idx} 
-                className="group/player flex items-center justify-between py-1 border-b border-white/[0.02] last:border-0"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-[9px] font-mono text-white/20">{(idx + 1).toString().padStart(2, '0')}</span>
-                  <span className="text-xs font-bold text-white/80 uppercase tracking-tight">{player}</span>
-                </div>
-                <div className="flex items-center gap-2 opacity-0 group-hover/player:opacity-100 transition-opacity">
-                  {player === team.captain && (
-                    <span className="text-[8px] bg-emerald-500 text-black px-1 font-black rounded">C</span>
-                  )}
-                  {player === team.viceCaptain && (
-                    <span className="text-[8px] bg-blue-500 text-white px-1 font-black rounded">VC</span>
-                  )}
-                  <button 
-                    onClick={() => handleTriggerSwap(player)}
-                    className="p-1 rounded bg-white/5 hover:bg-emerald-500/20 text-white/40 hover:text-emerald-500 transition-all"
-                    title="Swap Player"
-                  >
-                    <RefreshCcw className="w-3 h-3" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
 
-        <div className="space-y-3">
-          <div className="text-[9px] font-bold text-emerald-500/50 uppercase tracking-widest flex items-center gap-1.5">
-            <Zap className="w-2.5 h-2.5" /> Differentials
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {team.differentials && team.differentials.length > 0 ? team.differentials.map((player, idx) => (
-              <span 
-                key={idx} 
-                className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-[9px] font-bold text-emerald-400"
-              >
-                {player}
-              </span>
-            )) : <span className="text-[9px] text-white/20 italic">None identified</span>}
-          </div>
-        </div>
-
-        {team.backupPlayers && team.backupPlayers.length > 0 && (
-          <div className="space-y-3">
-            <div className="text-[9px] font-bold text-emerald-500/50 uppercase tracking-widest flex items-center gap-1.5">
-              <Users className="w-2.5 h-2.5" /> Backup Players
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {team.backupPlayers.map((player, idx) => (
-                <span 
-                  key={idx} 
-                  className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] font-bold text-white/50"
-                >
-                  {player}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <AnimatePresence>
-          {swappingPlayer && (
-            <motion.div 
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl space-y-4 overflow-hidden"
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">Suggestions for {swappingPlayer}</p>
-                <button onClick={() => setSwappingPlayer(null)}><X className="w-3" /></button>
-              </div>
-              
-              {isFetchingRecs ? (
-                <div className="flex items-center gap-2 text-[10px] font-bold text-white/40 italic">
-                  <Loader2 className="w-3 h-3 animate-spin" /> Analyzing options...
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {recommendations.length > 0 ? recommendations.map((rec, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleConfirmSwap(rec.name)}
-                      className="w-full text-left p-3 rounded-lg bg-black/40 border border-white/5 hover:border-emerald-500/50 transition-all group/rec"
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-black uppercase text-white group-hover/rec:text-emerald-500">{rec.name}</span>
-                        <Plus className="w-3 h-3 text-emerald-500" />
-                      </div>
-                      <p className="text-[9px] text-white/30 leading-tight italic">{rec.reason}</p>
-                    </button>
-                  )) : (
-                    <p className="text-[10px] text-white/30 italic text-center py-2">No alternative players found.</p>
-                  )}
-                </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div className="p-4 bg-black/40 rounded-xl border border-white/5 space-y-2">
-           <div className="text-[9px] font-bold text-white/30 uppercase tracking-widest italic flex items-center gap-2">
-            <Target className="w-2.5 h-2.5" /> Logical Rationale
+        <div className="space-y-2">
+           <div className="grid grid-cols-1 gap-1.5">
+             {team.players.map((player) => (
+               <div key={player} className="flex items-center justify-between p-2.5 rounded-xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.05] transition-colors">
+                 <div className="flex items-center gap-2.5">
+                   <div className={cn(
+                     "w-1 h-1 rounded-full",
+                     player === team.captain ? "bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.8)]" : player === team.viceCaptain ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" : "bg-white/10"
+                   )} />
+                   <span className={cn(
+                     "text-xs font-bold",
+                     player === team.captain ? "text-cyan-400" : player === team.viceCaptain ? "text-emerald-400" : "text-white/70"
+                   )}>
+                     {player}
+                   </span>
+                 </div>
+                 <div className="flex items-center gap-1.5">
+                   {player === team.captain && (
+                     <span className="text-[8px] font-black bg-cyan-500 text-black px-1.5 py-0.5 rounded uppercase">C</span>
+                   )}
+                   {player === team.viceCaptain && (
+                     <span className="text-[8px] font-black bg-emerald-500 text-black px-1.5 py-0.5 rounded uppercase">VC</span>
+                   )}
+                 </div>
+               </div>
+             ))}
            </div>
-           <p className="text-[11px] text-white/60 leading-relaxed font-medium italic">
-            "{team.rationale}"
-          </p>
         </div>
+
         {team.tossRationale && (
-          <div className="p-4 bg-blue-500/10 rounded-xl border border-blue-500/20 space-y-2">
-            <div className="text-[9px] font-black text-blue-400 uppercase tracking-widest flex items-center gap-2">
-              <Zap className="w-2.5 h-2.5" /> Post-Toss Edge
-            </div>
-            <p className="text-[11px] text-white/70 leading-relaxed font-bold italic">
+          <div className="p-3 rounded-xl bg-white/[0.03] border border-white/5">
+            <p className="text-[9px] text-white/30 leading-relaxed italic">
               "{team.tossRationale}"
             </p>
           </div>
         )}
-      </div>
 
-      <div className="px-6 py-3 bg-white/[0.01] border-t border-white/5 flex items-center justify-between">
         <button 
-          onClick={handleShare}
+          onClick={handleCopyTeam}
           className={cn(
-            "flex items-center gap-2 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+            "w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all border",
             copied 
-              ? "bg-emerald-500 text-black" 
-              : "bg-white/5 text-white/50 hover:bg-white/10 hover:text-white"
+              ? "bg-cyan-500 border-cyan-400 text-black shadow-lg shadow-cyan-500/20 active:scale-95" 
+              : "bg-white/5 border-white/10 text-white/40 hover:bg-white/10 hover:text-white"
           )}
         >
-          {copied ? (
-            <>
-              <CheckCheck className="w-3 h-3" /> Copied
-            </>
-          ) : (
-            <>
-              <Share2 className="w-3 h-3" /> Share Squad
-            </>
-          )}
+          {copied ? "SQUAD COPIED" : "COPY TEAM"}
         </button>
-        <div className="flex gap-1">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="w-2 h-0.5 bg-emerald-500/20" />
-          ))}
-        </div>
       </div>
     </motion.div>
   );
+};
+
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = error => reject(error);
+  });
 }
